@@ -1,0 +1,139 @@
+---
+title: "DecontX_cutoff_epithelial_summary"
+author: "Andrew Frauenpreis"
+date: "2024-01-17"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+```{r}
+library(tidyverse)
+library(Seurat)
+library(clustree)
+```
+  
+Here QC, cluster sizes, and varying resolutions were investigated for each lineage.
+Here the epithelium is shown but the process is the same for each major lineage.
+  
+```{r}
+decont_seurat_epi <- readRDS(file = "./Seurat objects/decont_seurat_epi_reintegrated.rds")
+```
+
+```{r}
+table(decont_seurat_epi@meta.data$orig.ident)
+table(decont_seurat_epi@meta.data$condition)
+
+table(decont_seurat_epi@meta.data$orig.ident, decont_seurat_epi@meta.data$seurat_clusters)
+```
+
+Summary QC
+
+```{r}
+col_list <- c("#beba5a", "#d5db40", "#72742b", "#c3cb9f", "#6d7a5a", "#7ee34d", "#a9e28b", "#5ab143", "#548b45")
+
+VlnPlot(decont_seurat_epi, features = c("nCount_decontXcounts", "nFeature_decontXcounts", "percent.mt"), cols = col_list, group.by = "orig.ident")
+
+VlnPlot(decont_seurat_epi, features = c("nFeature_decontXcounts", "percent.mt", "decontX_contamination"), cols = col_list, group.by = "orig.ident")
+
+VlnPlot(decont_seurat_epi, features = c("nFeature_decontXcounts", "percent.mt", "decontX_contamination"))
+```
+  
+Cluster trees were used to find an appropoiate resolutions for each major lineage.
+  
+```{r}
+DefaultAssay(decont_seurat_epi) <- "integrated"
+
+decont_seurat_epi <- RunPCA(decont_seurat_epi)
+
+decont_seurat_epi <- decont_seurat_epi %>% 
+  RunUMAP(dims = 1:30) %>% 
+  FindNeighbors(dims = 1:30) %>%
+  FindClusters(resolution = c(0, 0.2, 0.4, 0.5, 0.6, 0.8))
+```
+
+```{r}
+clustree(decont_seurat_epi, prefix = "integrated_snn_res.")
+```
+  
+With 0.5 resolution
+  
+```{r}
+decont_seurat_epi <- decont_seurat_epi %>% 
+  RunUMAP(dims = 1:30) %>% 
+  FindNeighbors(dims = 1:30) %>%
+  FindClusters(resolution = 0.5)
+```
+  
+```{r}
+DimPlot(decont_seurat_epi, label = TRUE)
+DimPlot(decont_seurat_epi, group.by = "Phase")
+
+DimPlot(decont_seurat_epi, group.by = "condition")
+DimPlot(decont_seurat_epi, split.by = "condition")
+
+DimPlot(decont_seurat_epi, group.by = "orig.ident")
+FeaturePlot(decont_seurat_epi, features = "decontX_contamination", label = TRUE)
+```
+  
+Clusters 7 and 8 were later combined due to being non-distinguishable. 
+  
+```{r}
+decont_seurat_epi$seurat_clusters <- ifelse(decont_seurat_epi$seurat_clusters %in% c(7,8), 7, decont_seurat_epi$seurat_clusters)
+
+Idents(decont_seurat_epi) <- "seurat_clusters"
+
+DimPlot(decont_seurat_epi, label = TRUE)
+```
+
+```{r}
+DefaultAssay(decont_seurat_epi) <- "SCT"
+```
+
+Proportionality for each cluster are shown below. 
+
+```{r}
+meta_data <- decont_seurat_epi[[]]
+
+meta_data %>% 
+  group_by(orig.ident, seurat_clusters) %>% 
+  summarise(count = n()) %>% 
+  ungroup() %>% 
+  group_by(orig.ident, .drop = FALSE) %>% 
+  mutate(sum_count = sum(count),
+         porportion = count / sum_count) %>% 
+  ggplot(mapping = aes(seurat_clusters, porportion, fill = orig.ident)) +
+  geom_bar(stat = "identity", position = "dodge") + 
+  theme_dark()
+
+meta_data %>% 
+  group_by(condition, seurat_clusters) %>% 
+  summarise(count = n()) %>% 
+  ungroup() %>% 
+  group_by(condition, .drop = FALSE) %>% 
+  mutate(sum_count = sum(count),
+         porportion = count / sum_count) %>% 
+  ggplot(mapping = aes(seurat_clusters, count, fill = condition)) +
+  geom_bar(stat = "identity", position = "dodge") + 
+  theme_dark()
+```
+  
+The markers at resolution 0.5 were used for final annotation. (The resolution vaires on lineage as said in the paper).
+  
+Further, any down stream analysis for this lineage will be done off this object and resolution.
+  
+```{r}
+#markers <- FindAllMarkers(decont_seurat_epi, min.pct = 0.1, logfc.threshold = 0.25, only.pos = TRUE)
+```
+
+```{r}
+#library(writexl)
+
+#write_xlsx(markers, "./data/decont_epi_markers_3-27-24.xlsx")
+```
+
+```{r}
+#saveRDS(decont_seurat_epi, file = "./Seurat objects/decont_seurat_epi_reintegrated.rds")
+```
+

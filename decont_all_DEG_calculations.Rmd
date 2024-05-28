@@ -1,0 +1,128 @@
+---
+title: "decont_all_DEG_calculations"
+author: "Andrew Frauenpreis"
+date: "2024-01-26"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+```{r}
+library(writexl)
+library(rlist)
+library(tidyverse)
+library(Seurat)
+```
+
+This code finds all DEGs by condition for each lineage by cell type.
+
+```{r}
+decont_seurat_mes <- readRDS(file = "./Seurat objects/no_prolif_mes_rPCA.rds")
+
+decont_seurat_prolif_mes <- readRDS(file = "./Seurat objects/prolif_mes_rPCA.rds")
+
+decont_seurat_epi <- readRDS(file = "./Seurat objects/decont_seurat_epi_reintegrated.rds")
+
+decont_seurat_endo <- readRDS(file = "./Seurat objects/decont_seurat_endo_reintegrated.rds")
+```
+
+```{r}
+DimPlot(decont_seurat_mes, label = TRUE)
+
+DimPlot(decont_seurat_prolif_mes, label = TRUE)
+
+DimPlot(decont_seurat_epi, label = TRUE)
+
+DimPlot(decont_seurat_endo, label = TRUE)
+```
+
+```{r}
+decont_seurat_mes <- PrepSCTFindMarkers(decont_seurat_mes)
+
+decont_seurat_prolif_mes <- PrepSCTFindMarkers(decont_seurat_prolif_mes)
+
+decont_seurat_epi <- PrepSCTFindMarkers(decont_seurat_epi)
+
+decont_seurat_endo <- PrepSCTFindMarkers(decont_seurat_endo)
+```
+
+```{r}
+#Mesenchyme
+decont_seurat_mes$celltype.cond <- paste(Idents(decont_seurat_mes), decont_seurat_mes$condition, sep = "_")
+
+Idents(decont_seurat_mes) <- "celltype.cond"
+
+#Proliferating Mesenchyme
+decont_seurat_prolif_mes$celltype.cond <- paste(Idents(decont_seurat_prolif_mes), decont_seurat_prolif_mes$condition, sep = "_")
+
+Idents(decont_seurat_prolif_mes) <- "celltype.cond"
+
+#Epithelial
+decont_seurat_epi$celltype.cond <- paste(Idents(decont_seurat_epi), decont_seurat_epi$condition, sep = "_")
+
+Idents(decont_seurat_epi) <- "celltype.cond"
+
+#Endothelial
+decont_seurat_endo$celltype.cond <- paste(Idents(decont_seurat_endo), decont_seurat_endo$condition, sep = "_")
+
+Idents(decont_seurat_endo) <- "celltype.cond"
+```
+
+```{r}
+#following function takes in a Seurat object and outputs a list of DEG comparisons by cluster
+#the values are T21 - CTL (ident.1 = T21, ident.2 = CTL)
+
+get_DEGs <- function(seurat.object){
+  clust_df <- FetchData(object = seurat.object, vars = c("condition", "celltype.cond", "seurat_clusters")) %>% 
+    unique()
+
+  ctl_df <- clust_df %>% 
+    filter(condition == "CTL") %>% 
+    group_by(celltype.cond) %>% 
+    arrange(seurat_clusters)
+
+  t21_df <- clust_df %>% 
+    filter(condition == "T21") %>% 
+    group_by(celltype.cond) %>% 
+    arrange(seurat_clusters)
+
+  ctl_vec <- ctl_df$celltype.cond
+
+  t21_vec <- t21_df$celltype.cond
+
+  clusters <- as.character(ctl_df$seurat_clusters)
+  
+  DEG_list <- list()
+  for (celltype in 1:length(ctl_vec)) {
+    new_DEG <- FindMarkers(seurat.object, ident.1 = t21_vec[celltype], ident.2 = ctl_vec[celltype], verbose = FALSE) %>% 
+    rownames_to_column(var = "gene")
+    DEG_list <- list.append(DEG_list, new_DEG)
+  }
+  
+  names(DEG_list) <- clusters
+  return(DEG_list)
+}
+```
+
+```{r}
+mes_DEGs <- get_DEGs(decont_seurat_mes)
+
+prolif_mes_DEGs <- get_DEGs(decont_seurat_prolif_mes)
+
+epi_DEGs <- get_DEGs(decont_seurat_epi)
+
+endo_DEGs <- get_DEGs(decont_seurat_endo)
+```
+
+```{r}
+write_xlsx(mes_DEGs, "./data/mes_DEG_1-26-24.xlsx")
+
+write_xlsx(prolif_mes_DEGs, "./data/prolif_mes_DEG_1-26-24.xlsx")
+
+write_xlsx(epi_DEGs, "./data/epi_DEG_2-7-24.xlsx")
+
+write_xlsx(endo_DEGs, "./data/endo_DEG_2-12-24.xlsx")
+
+write_xlsx(immune_DEGs, "./data/immune_DEG_1-26-24.xlsx")
+```

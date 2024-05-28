@@ -1,0 +1,162 @@
+---
+title: "decont_x_pipeline"
+author: "Andrew Frauenpreis"
+date: "2024-01-01"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+```{r}
+library(tidyverse)
+library(Seurat)
+library(SingleCellExperiment)
+library(decontX)
+```
+  
+  
+Both raw and filtered counts need to be uploaded. DecontX uses the droplets present in the raw data as background and removed the filtered cells from that matrix prior to running its algorithms. 
+  
+  
+```{r}
+filtered_files = c("C:/Users/andrew.frauenpreis/Documents/USC_ScSeq_T21/Rawcounts/3412/outs/filtered_feature_bc_matrix", "C:/Users/andrew.frauenpreis/Documents/USC_ScSeq_T21/Rawcounts/3416/outs/filtered_feature_bc_matrix",
+"C:/Users/andrew.frauenpreis/Documents/USC_ScSeq_T21/Rawcounts/3442/outs/filtered_feature_bc_matrix",
+"C:/Users/andrew.frauenpreis/Documents/USC_ScSeq_T21/Rawcounts/3463/outs/filtered_feature_bc_matrix",
+"C:/Users/andrew.frauenpreis/Documents/USC_ScSeq_T21/Rawcounts/3675/outs/filtered_feature_bc_matrix",
+"C:/Users/andrew.frauenpreis/Documents/USC_ScSeq_T21/Rawcounts/H28406/outs/filtered_feature_bc_matrix",
+"C:/Users/andrew.frauenpreis/Documents/USC_ScSeq_T21/Rawcounts/H28412/outs/filtered_feature_bc_matrix",
+"C:/Users/andrew.frauenpreis/Documents/USC_ScSeq_T21/Rawcounts/H28433/outs/filtered_feature_bc_matrix",
+"C:/Users/andrew.frauenpreis/Documents/USC_ScSeq_T21/Rawcounts/H28554/outs/filtered_feature_bc_matrix")
+
+names(filtered_files) <- c("3412", "3416", "3442", "3463","3675", "H28406", "H28412", "H28433", "H28554")
+
+raw_files = c("C:/Users/andrew.frauenpreis/Documents/USC_ScSeq_T21/Rawcounts/3412/outs/raw_feature_bc_matrix", "C:/Users/andrew.frauenpreis/Documents/USC_ScSeq_T21/Rawcounts/3416/outs/raw_feature_bc_matrix",
+"C:/Users/andrew.frauenpreis/Documents/USC_ScSeq_T21/Rawcounts/3442/outs/raw_feature_bc_matrix",
+"C:/Users/andrew.frauenpreis/Documents/USC_ScSeq_T21/Rawcounts/3463/outs/raw_feature_bc_matrix",
+"C:/Users/andrew.frauenpreis/Documents/USC_ScSeq_T21/Rawcounts/3675/outs/raw_feature_bc_matrix",
+"C:/Users/andrew.frauenpreis/Documents/USC_ScSeq_T21/Rawcounts/H28406/outs/raw_feature_bc_matrix",
+"C:/Users/andrew.frauenpreis/Documents/USC_ScSeq_T21/Rawcounts/H28412/outs/raw_feature_bc_matrix",
+"C:/Users/andrew.frauenpreis/Documents/USC_ScSeq_T21/Rawcounts/H28433/outs/raw_feature_bc_matrix",
+"C:/Users/andrew.frauenpreis/Documents/USC_ScSeq_T21/Rawcounts/H28554/outs/raw_feature_bc_matrix")
+
+names(raw_files) <- c("3412", "3416", "3442", "3463","3675", "H28406", "H28412", "H28433", "H28554")
+```
+
+```{r}
+data_10X <- Read10X(data.dir = filtered_files)
+
+data_10X_raw <- Read10X(data.dir = raw_files)
+```
+
+```{r}
+sce <- SingleCellExperiment(list(counts = data_10X))
+  
+sce.raw <- SingleCellExperiment(list(counts = data_10X_raw))
+```
+
+```{r}
+sce <- decontX(sce, background = sce.raw)
+```
+
+```{r}
+plotDecontXContamination(sce)
+
+decont_umap <- reducedDim(sce, "decontX_UMAP")
+```
+  
+To retain the base RNA assay, a Seurat object will be created from the filtered matrices and then the decontX assay will be added.
+  
+```{r}
+decont_seurat <- CreateSeuratObject(data_10X)
+
+T21_list <- c("3412", "3442", "H28406", "H28412", "H28433")
+
+decont_seurat$condition <- ifelse(decont_seurat$orig.ident %in% T21_list, "T21", "CTL")
+```
+
+```{r}
+decont_seurat[["decontXcounts"]] <- CreateAssayObject(counts = round(decontXcounts(sce)))
+
+decont_seurat[["decontX_contamination"]] <- sce$decontX_contamination
+
+decont_seurat[["decontX_clusters"]] <- sce$decontX_clusters
+
+decont_seurat[["decont_umap"]] <- CreateDimReducObject(decont_umap, assay = "decontXcounts")
+```
+
+```{r}
+DimPlot(decont_seurat, reduction = "decont_umap")
+```
+  
+Initial processing without integration, default assay is set to "decontXcounts".
+  
+```{r}
+DefaultAssay(decont_seurat)
+
+DefaultAssay(decont_seurat) <- "decontXcounts"
+DefaultAssay(decont_seurat)
+```
+  
+Percentage of mitochondrial genes is set based on the below pattern. 
+  
+```{r}
+decont_seurat[["percent.mt"]] <- PercentageFeatureSet(decont_seurat, pattern = "^MT-")
+```
+
+QC metrics for each sample prior to cleaning
+
+```{r}
+table(decont_seurat@meta.data$orig.ident)
+table(decont_seurat@meta.data$condition)
+```
+
+```{r}
+col_list <- c("#beba5a", "#d5db40", "#72742b", "#c3cb9f", "#6d7a5a", "#7ee34d", "#a9e28b", "#5ab143", "#548b45")
+
+VlnPlot(decont_seurat, features = c("nCount_decontXcounts", "nFeature_decontXcounts", "percent.mt"), cols = col_list)
+```
+  
+Each sample will be cleaned.
+  
+An upper end feature cutoff will be done in DecontX_cutoff.Rmd prior to downstream analysis.
+  
+```{r}
+decont_seurat <- subset(decont_seurat, subset = nFeature_decontXcounts > 200 & percent.mt < 20)
+```
+
+Post cleaning QC metrics
+
+```{r}
+table(decont_seurat@meta.data$orig.ident)
+table(decont_seurat@meta.data$condition)
+```
+
+```{r}
+col_list <- c("#beba5a", "#d5db40", "#72742b", "#c3cb9f", "#6d7a5a", "#7ee34d", "#a9e28b", "#5ab143", "#548b45")
+
+VlnPlot(decont_seurat, features = c("nCount_decontXcounts", "nFeature_decontXcounts", "percent.mt"), cols = col_list)
+```
+
+```{r}
+decont_seurat <- decont_seurat %>% 
+  SCTransform(assay = "decontXcounts", vars.to.regress = "percent.mt") %>% 
+  RunPCA()
+```
+
+```{r}
+ElbowPlot(decont_seurat, ndims = 50)
+```
+
+```{r}
+decont_seurat <- decont_seurat %>% 
+  RunUMAP(dims = 1:30)%>% 
+  FindNeighbors(dims = 1:30) %>% 
+  FindClusters()
+```
+  
+This object was saved as file = "./Seurat objects/t21.decontX.rds" prior to any integration or doublet correction
+  
+```{r}
+saveRDS(decont_seurat, file = "./Seurat objects/t21.decontX.rds")
+```

@@ -1,0 +1,264 @@
+---
+title: "all_GSEA_analysis"
+author: "Andrew Frauenpreis"
+date: "2024-02-28"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(rlist)
+library(tidyverse)
+library(Seurat)
+library(fgsea)
+```
+    
+Establish pathways of interest for GSEA analysis.
+  
+Hallmark symbols can be downloaded from https://www.gsea-msigdb.org/gsea/msigdb/index.jsp. 
+  
+```{r}
+all_hallmark_file <- gmtPathways("./Hallmarks/h.all.v2023.2.Hs.symbols.gmt")
+
+length(all_hallmark_file)
+
+str(head(all_hallmark_file))
+
+endo_hallmarks <- c("HALLMARK_ANGIOGENESIS", "HALLMARK_INTERFERON_ALPHA_RESPONSE", "HALLMARK_INTERFERON_GAMMA_RESPONSE", "HALLMARK_IL6_JAK_STAT3_SIGNALING", "HALLMARK_NOTCH_SIGNALING", "HALLMARK_TGF_BETA_SIGNALING", "HALLMARK_HYPOXIA")
+
+mes_hallmarks <-  c("HALLMARK_ADIPOGENESIS", "HALLMARK_EPITHELIAL_MESENCHYMAL_TRANSITION", "HALLMARK_MYOGENESIS", "HALLMARK_HEDGEHOG_SIGNALING", "HALLMARK_WNT_BETA_CATENIN_SIGNALING")
+
+epi_hallmarks <- c("HALLMARK_APICAL_JUNCTION", "HALLMARK_EPITHELIAL_MESENCHYMAL_TRANSITION", "HALLMARK_SPERMATOGENESIS", "HALLMARK_WNT_BETA_CATENIN_SIGNALING", "HALLMARK_HEDGEHOG_SIGNALING")
+
+endo_hallmarks <- all_hallmark_file[endo_hallmarks]
+
+mes_hallmarks <- all_hallmark_file[mes_hallmarks]
+
+epi_hallmarks <- all_hallmark_file[epi_hallmarks]
+```
+  
+  
+Load in DEGs    
+  
+
+```{r}
+endo_list <- list()
+for (cluster in 1:10) {
+  new_DEG <- readxl::read_xlsx(path = "./data/endo_DEG_2-7-24.xlsx", sheet = cluster)
+  endo_list <- list.append(endo_list, new_DEG)
+}
+names(endo_list) <- c("Naive Cap", "Pericyte (A)", "Late gCap", "Plexus_Branchpoint", "Venous", "Mid_Late gCap", "Lymphatic", "Aerocyte", "Pericytes", "Arterial")
+
+mes_list <- list()
+for (cluster in 1:16) {
+  new_DEG <- readxl::read_xlsx(path = "./data/mes_DEG_1-26-24.xlsx", sheet = cluster)
+  mes_list <- list.append(mes_list, new_DEG)
+}
+names(mes_list) <- c(0:(length(mes_list)-1))
+
+epi_list <- list()
+for (cluster in 1:8) {
+  new_DEG <- readxl::read_xlsx(path = "./data/epi_DEG_2-7-24.xlsx", sheet = cluster)
+  epi_list <- list.append(epi_list, new_DEG)
+}
+names(epi_list) <- c(0:(length(epi_list)-1))
+```
+  
+  
+The function to get GSEA output  
+  
+  
+```{r}
+get_GSEA = function(DEG_df, hallmarks, p_value){
+  
+  ranks <- DEG_df$avg_log2FC
+  names(ranks) <- DEG_df$gene
+  ranks <- sort(ranks, decreasing = TRUE)
+  
+  fgseaRes <- fgsea(hallmarks, ranks) %>% 
+    arrange(desc(NES))
+  
+  fgseaRes$Enrichment <- ifelse(fgseaRes$NES > 0, "Up-regulated", "Down-regulated")
+  
+  colos <- setNames(c("firebrick2", "dodgerblue2"),
+                 c("Up-regulated", "Down-regulated"))
+  
+  filterd_gsea <- fgseaRes %>% 
+    filter(pval < p_value)
+  
+  g1 <- ggplot(filterd_gsea, aes(reorder(pathway, NES), NES)) +
+        geom_point( aes(fill = Enrichment, size = size), shape=21) +
+        scale_fill_manual(values = colos ) +
+        scale_size_continuous(range = c(2,10)) +
+        geom_hline(yintercept = 0) +
+        coord_flip() +
+        labs(x="Pathway", y="Normalized Enrichment Score", title = paste0("Pval < ",p_value))
+  
+  output = list("Results" = fgseaRes, "Plot" = g1)
+  return(output)
+}
+```
+
+```{r}
+endo_output <- lapply(endo_list, get_GSEA, hallmarks = all_hallmark_file, p_value = 0.1)
+
+mes_output <- lapply(mes_list, get_GSEA, hallmarks = mes_hallmarks, p_value = 0.1)
+
+epi_output <- lapply(epi_list, get_GSEA, hallmarks = epi_hallmarks, p_value = 0.1)
+```
+
+```{r}
+export_outs <- function(output, excel_path, gg_path){
+  
+  excel_list <- list()
+  for (result in 1:length(output)) {
+    excel_list <- list.append(excel_list, output[[result]]$Results)
+  }
+  names(excel_list) <- names(output)
+  
+  gg_list <- list()
+  for (plot in 1:length(output)) {
+    gg_list <- list.append(gg_list, output[[plot]]$Plot)
+  }
+  names(gg_list) <- names(output)
+  
+  writexl::write_xlsx(excel_list, path = excel_path)
+  
+  gg_names <- names(gg_list)
+  for (plot in 1:length(gg_list)) {
+    ggsave(plot = gg_list[[plot]], filename = paste(gg_path,gg_names[plot],".png", sep = ""), device = "png")
+  }
+}
+```
+
+```{r}
+endo_excel_path <- "./data/full_endo_GSEA_4-2-24.xlsx"
+endo_gg_path <- "./plots/endothelial/GSEA/full/"
+
+export_outs(endo_output, endo_excel_path, endo_gg_path)
+```
+
+```{r}
+mes_excel_path <- "./data/mes_GSEA.xlsx"
+mes_gg_path <- "./plots/mesenchymal/GSEA/"
+
+export_outs(mes_output, mes_excel_path, mes_gg_path)
+```
+
+```{r}
+epi_excel_path <- "./data/epi_GSEA.xlsx"
+epi_gg_path <- "./plots/epithelial/GSEA/"
+
+export_outs(epi_output, epi_excel_path, epi_gg_path)
+```
+  
+  
+Now getting DEGs by condition per lineage, ignoring clusters.
+  
+  
+```{r}
+decont_seurat <- readRDS(file = "./Seurat objects/decont_seurat_rPCA_cutoff.rds")
+
+decont_seurat_mes <- readRDS(file = "./Seurat objects/no_prolif_mes_rPCA.rds")
+
+decont_seurat_epi <- readRDS(file = "./Seurat objects/decont_seurat_epi_reintegrated.rds")
+
+decont_seurat_endo_pericyte <- readRDS(file = "./Seurat objects/decont_seurat_endo_reintegrated_old.rds")
+```
+
+```{r}
+Idents(decont_seurat) <- "condition"
+
+Idents(decont_seurat_mes) <- "condition"
+
+Idents(decont_seurat_epi) <- "condition"
+
+Idents(decont_seurat_endo_pericyte) <- "condition"
+```
+
+```{r}
+DimPlot(decont_seurat_mes)
+```
+
+```{r}
+whole_DEG <- FindMarkers(decont_seurat, ident.1 = "T21", ident.2 = "CTL") %>% 
+    rownames_to_column(var = "gene")
+  
+mes_DEG <- FindMarkers(decont_seurat_mes, ident.1 = "T21", ident.2 = "CTL") %>% 
+    rownames_to_column(var = "gene")
+
+epi_DEG <- FindMarkers(decont_seurat_epi, ident.1 = "T21", ident.2 = "CTL") %>% 
+    rownames_to_column(var = "gene")
+
+endo_DEG <- FindMarkers(decont_seurat_endo_pericyte, ident.1 = "T21", ident.2 = "CTL") %>% 
+    rownames_to_column(var = "gene")
+```
+
+```{r}
+endo_hallmarks <- c("HALLMARK_ANGIOGENESIS", "HALLMARK_INTERFERON_ALPHA_RESPONSE", "HALLMARK_INFLAMMATORY_RESPONSE", "HALLMARK_INTERFERON_GAMMA_RESPONSE", "HALLMARK_IL6_JAK_STAT3_SIGNALING", "HALLMARK_NOTCH_SIGNALING", "HALLMARK_TGF_BETA_SIGNALING", "HALLMARK_HYPOXIA")
+
+mes_hallmarks <-  c("HALLMARK_INTERFERON_ALPHA_RESPONSE", "HALLMARK_INTERFERON_GAMMA_RESPONSE", "HALLMARK_INFLAMMATORY_RESPONSE", "HALLMARK_ADIPOGENESIS", "HALLMARK_EPITHELIAL_MESENCHYMAL_TRANSITION", "HALLMARK_MYOGENESIS", "HALLMARK_HEDGEHOG_SIGNALING", "HALLMARK_WNT_BETA_CATENIN_SIGNALING")
+
+epi_hallmarks <- c("HALLMARK_INTERFERON_ALPHA_RESPONSE", "HALLMARK_INTERFERON_GAMMA_RESPONSE", "HALLMARK_INFLAMMATORY_RESPONSE", "HALLMARK_APICAL_JUNCTION", "HALLMARK_EPITHELIAL_MESENCHYMAL_TRANSITION", "HALLMARK_SPERMATOGENESIS", "HALLMARK_WNT_BETA_CATENIN_SIGNALING", "HALLMARK_HEDGEHOG_SIGNALING")
+
+endo_hallmarks <- all_hallmark_file[endo_hallmarks]
+
+mes_hallmarks <- all_hallmark_file[mes_hallmarks]
+
+epi_hallmarks <- all_hallmark_file[epi_hallmarks]
+```
+
+```{r}
+all_mes_output <- get_GSEA(mes_DEG, mes_hallmarks)
+
+all_epi_output <- get_GSEA(epi_DEG, epi_hallmarks)
+
+all_endo_output <- get_GSEA(endo_DEG, all_hallmark_file)
+
+#####################################################
+
+comb_hallmarks <- c("HALLMARK_INTERFERON_ALPHA_RESPONSE", "HALLMARK_INTERFERON_GAMMA_RESPONSE", "HALLMARK_IL6_JAK_STAT3_SIGNALING", "HALLMARK_INFLAMMATORY_RESPONSE", "HALLMARK_ALLOGRAFT_REJECTION", "HALLMARK_COMPLEMENT", "HALLMARK_COAGULATION")
+
+comb_hallmarks <- all_hallmark_file[comb_hallmarks]
+
+whole_output <- get_GSEA(whole_DEG, comb_hallmarks)
+```
+
+```{r}
+all_endo_excel_path <- "./data/full_all_endo_GSEA_4-2-24.xlsx"
+all_endo_gg_path <- "./plots/endothelial/GSEA/full/"
+
+writexl::write_xlsx(all_endo_output$Results, path = all_endo_excel_path)
+
+ggsave(plot = all_endo_output$Plot, filename = paste(all_endo_gg_path,"all_endo",".png", sep = ""), device = "png")
+```
+
+```{r}
+all_epi_excel_path <- "./data/all_epi_GSEA.xlsx"
+all_epi_gg_path <- "./plots/epithelial/GSEA/"
+
+writexl::write_xlsx(all_epi_output$Results, path = all_epi_excel_path)
+
+ggsave(plot = all_epi_output$Plot, filename = paste(all_epi_gg_path,"all_epi",".png", sep = ""), device = "png")
+```
+
+```{r}
+all_mes_excel_path <- "./data/all_mes_GSEA.xlsx"
+all_mes_gg_path <- "./plots/mesenchymal/GSEA/"
+
+writexl::write_xlsx(all_mes_output$Results, path = all_mes_excel_path)
+
+ggsave(plot = all_mes_output$Plot, filename = paste(all_mes_gg_path,"all_mes",".png", sep = ""), device = "png")
+```
+
+```{r}
+whole_excel_path <- "./data/whole_GSEA.xlsx"
+whole_gg_path <- "./plots/major/GSEA/"
+
+writexl::write_xlsx(whole_output$Results, path = whole_excel_path)
+
+ggsave(plot = whole_output$Plot, filename = paste(whole_gg_path,"whole_object",".png", sep = ""), device = "png")
+```

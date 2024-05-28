@@ -1,0 +1,339 @@
+---
+title: "decont_propeller_porportionality"
+author: "Andrew Frauenpreis"
+date: "2024-01-30"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+```{r}
+library(scales)
+library(rstatix)
+library(tidyverse)
+library(Seurat)
+library(speckle)
+library(limma)
+```
+  
+This code performs proportionality (cell composition analysis) for each lineage comparing T21 to Non-T21 by cell type.
+  
+```{r}
+decont_seurat_mes <- readRDS(file = "./Seurat objects/no_prolif_mes_rPCA.rds")
+
+decont_seurat_prolif_mes <- readRDS(file = "./Seurat objects/prolif_mes_rPCA.rds")
+
+decont_seurat_epi <- readRDS(file = "./Seurat objects/decont_seurat_epi_reintegrated.rds")
+
+decont_seurat_endo <- readRDS(file = "./Seurat objects/decont_seurat_endo_reintegrated.rds")
+```
+
+```{r}
+decont_seurat_mes$condition <- ifelse(decont_seurat_mes$condition == "CTL", "Non-T21", decont_seurat_mes$condition)
+
+decont_seurat_prolif_mes$condition <- ifelse(decont_seurat_prolif_mes$condition == "CTL", "Non-T21", decont_seurat_prolif_mes$condition)
+
+decont_seurat_epi$condition <- ifelse(decont_seurat_epi$condition == "CTL", "Non-T21", decont_seurat_epi$condition)
+
+decont_seurat_endo$condition <- ifelse(decont_seurat_endo$condition == "CTL", "Non-T21", decont_seurat_endo$condition)
+```
+
+Propeller was used with the logit transformation for all lineages
+
+**Mesenchyme without proliferative cluster**
+
+```{r}
+propeller(clusters = decont_seurat_mes$seurat_clusters, sample = decont_seurat_mes$orig.ident, group = decont_seurat_mes$condition, transform = "logit", trend = TRUE)
+```
+
+```{r}
+props <- getTransformedProps(clusters = decont_seurat_mes$seurat_clusters, sample = decont_seurat_mes$orig.ident)
+```
+
+```{r}
+adj_props <- as.data.frame(props[["TransformedProps"]])
+
+adj_props %>% 
+  group_by(clusters) %>% 
+  shapiro_test(Freq) %>% 
+  adjust_pvalue(method = "fdr")
+```
+
+```{r}
+plotCellTypeMeanVar(props$Counts)
+```
+
+```{r}
+key <- FetchData(object = decont_seurat_mes, vars = c("orig.ident", "orig.cond", "condition")) %>% 
+  unique()
+
+df_props <- as.data.frame(props$Proportions) %>% 
+  rename(orig.ident = sample)
+
+df_props <- left_join(df_props, key, by = c("orig.ident"))
+
+df_props <- df_props %>% 
+  mutate(Percentage = Freq * 100)
+
+df_props %>% 
+  ggplot(mapping = aes(x = orig.ident, y = Percentage, fill = clusters)) + 
+  geom_col(position = position_fill(reverse = TRUE), color = "black") +
+  facet_wrap(facets = vars(condition), scales = "free") +
+  coord_flip() +
+  theme_classic() +
+  theme(legend.position = "none", text = element_text(size = 15)) +
+  labs(x = "")
+
+df_props %>% 
+  group_by(condition, clusters) %>% 
+  summarise(Percentage = mean(Percentage)) %>% 
+  ggplot(mapping = aes(x = fct_rev(condition), y = Percentage, fill = clusters)) + 
+  geom_col(position = position_fill(reverse = TRUE), color = "black") +
+  theme_classic() +
+  theme(legend.position = "none", text = element_text(size = 20)) +
+  labs(x = "") +
+  scale_y_continuous(labels = percent) +
+  coord_flip()
+```
+
+**Proliferative Mes**
+
+```{r}
+propeller(clusters = decont_seurat_prolif_mes$seurat_clusters, sample = decont_seurat_prolif_mes$orig.ident, group = decont_seurat_prolif_mes$condition, transform = "logit", trend = TRUE)
+```
+
+```{r}
+decont_seurat_prolif_mes$orig.cond <- paste(decont_seurat_prolif_mes$orig.ident, decont_seurat_prolif_mes$condition, sep = "_")
+```
+
+```{r}
+props <- getTransformedProps(clusters = decont_seurat_prolif_mes$seurat_clusters, sample = decont_seurat_prolif_mes$orig.ident)
+```
+
+```{r}
+adj_props <- as.data.frame(props[["TransformedProps"]])
+
+adj_props %>% 
+  group_by(clusters) %>% 
+  shapiro_test(Freq) %>% 
+  adjust_pvalue(method = "fdr")
+```
+
+```{r}
+plotCellTypeMeanVar(props$Counts)
+```
+
+```{r}
+key <- FetchData(object = decont_seurat_prolif_mes, vars = c("orig.ident", "orig.cond", "condition")) %>% 
+  unique()
+
+df_props <- as.data.frame(props$Proportions) %>% 
+  rename(orig.ident = sample)
+
+df_props <- left_join(df_props, key, by = c("orig.ident"))
+
+df_props <- df_props %>% 
+  mutate(Percentage = Freq * 100)
+
+df_props %>% 
+  ggplot(mapping = aes(x = orig.ident, y = Percentage, fill = clusters)) + 
+  geom_col(position = position_fill(reverse = TRUE), color = "black") +
+  facet_wrap(facets = vars(condition), scales = "free") +
+  coord_flip() +
+  theme_classic() +
+  theme(legend.position = "none", text = element_text(size = 15)) +
+  labs(x = "")
+
+df_props %>% 
+  group_by(condition, clusters) %>% 
+  summarise(Percentage = mean(Percentage)) %>% 
+  ggplot(mapping = aes(x = fct_rev(condition), y = Percentage, fill = clusters)) + 
+  geom_col(position = position_fill(reverse = TRUE), color = "black") +
+  theme_classic() +
+  theme(legend.position = "none", text = element_text(size = 20)) +
+  labs(x = "") +
+  scale_y_continuous(labels = percent) +
+  coord_flip()
+```
+  
+**Endothelial**
+  
+```{r}
+propeller(clusters = decont_seurat_endo$seurat_clusters, sample = decont_seurat_endo$orig.ident, group = decont_seurat_endo$condition, transform = "logit", trend = FALSE)
+```
+
+```{r}
+decont_seurat_endo$orig.cond <- paste(decont_seurat_endo$orig.ident, decont_seurat_endo$condition, sep = "_")
+```
+
+```{r}
+props <- getTransformedProps(clusters = decont_seurat_endo$seurat_clusters, sample = decont_seurat_endo$orig.ident)
+```
+
+```{r}
+adj_props <- as.data.frame(props[["TransformedProps"]])
+
+adj_props %>% 
+  group_by(clusters) %>% 
+  shapiro_test(Freq) %>% 
+  adjust_pvalue(method = "fdr")
+```
+
+```{r}
+plotCellTypeMeanVar(props$Counts)
+```
+
+```{r}
+key <- FetchData(object = decont_seurat_endo, vars = c("orig.ident", "orig.cond", "condition")) %>% 
+  unique()
+
+df_props <- as.data.frame(props$Proportions) %>% 
+  rename(orig.ident = sample)
+
+df_props <- left_join(df_props, key, by = c("orig.ident"))
+
+df_props <- df_props %>% 
+  mutate(Percentage = Freq * 100)
+
+df_props %>% 
+  ggplot(mapping = aes(x = orig.ident, y = Percentage, fill = clusters)) + 
+  geom_col(position = position_fill(reverse = TRUE), color = "black") +
+  facet_wrap(facets = vars(condition), scales = "free") +
+  coord_flip() +
+  theme_classic() +
+  theme(legend.position = "none", text = element_text(size = 15)) +
+  labs(x = "")
+
+df_props %>% 
+  group_by(condition, clusters) %>% 
+  summarise(Percentage = mean(Percentage)) %>% 
+  ggplot(mapping = aes(x = fct_rev(condition), y = Percentage, fill = clusters)) + 
+  geom_col(position = position_fill(reverse = TRUE), color = "black") +
+  theme_classic() +
+  theme(legend.position = "none", text = element_text(size = 20)) +
+  labs(x = "") +
+  scale_y_continuous(labels = percent) +
+  coord_flip()
+```
+  
+**Epithelial**
+  
+```{r}
+propeller(clusters = decont_seurat_epi$seurat_clusters, sample = decont_seurat_epi$orig.ident, group = decont_seurat_epi$condition, transform = "logit", trend = TRUE)
+```
+
+```{r}
+decont_seurat_epi$orig.cond <- paste(decont_seurat_epi$orig.ident, decont_seurat_epi$condition, sep = "_")
+```
+
+```{r}
+props <- getTransformedProps(clusters = decont_seurat_epi$seurat_clusters, sample = decont_seurat_epi$orig.ident)
+```
+
+```{r}
+adj_props <- as.data.frame(props[["TransformedProps"]])
+
+adj_props %>% 
+  group_by(clusters) %>% 
+  shapiro_test(Freq) %>% 
+  adjust_pvalue(method = "fdr")
+```
+
+```{r}
+plotCellTypeMeanVar(props$Counts)
+```
+
+```{r}
+key <- FetchData(object = decont_seurat_epi, vars = c("orig.ident", "orig.cond", "condition")) %>% 
+  unique()
+
+df_props <- as.data.frame(props$Proportions) %>% 
+  rename(orig.ident = sample)
+
+df_props <- left_join(df_props, key, by = c("orig.ident"))
+
+df_props <- df_props %>% 
+  mutate(Percentage = Freq * 100)
+
+df_props %>% 
+  ggplot(mapping = aes(x = orig.ident, y = Percentage, fill = clusters)) + 
+  geom_col(position = position_fill(reverse = TRUE), color = "black") +
+  facet_wrap(facets = vars(condition), scales = "free") +
+  coord_flip() +
+  theme_classic() +
+  theme(legend.position = "none", text = element_text(size = 15)) +
+  labs(x = "")
+
+df_props %>% 
+  group_by(condition, clusters) %>% 
+  summarise(Percentage = mean(Percentage)) %>% 
+  ggplot(mapping = aes(x = fct_rev(condition), y = Percentage, fill = clusters)) + 
+  geom_col(position = position_fill(reverse = TRUE), color = "black") +
+  theme_classic() +
+  theme(legend.position = "none", text = element_text(size = 20)) +
+  labs(x = "") +
+  scale_y_continuous(labels = percent) +
+  coord_flip()
+```
+  
+**Lineage comparisons**
+Further, the proportions of entire major lineages were compared between T21 and non-T21 samples.
+For instance, T21-epithelium vs Non-T21-epithelium. 
+  
+```{r}
+propeller(clusters = decont_seurat$lineage, sample = decont_seurat$orig.ident, group = decont_seurat$condition, transform = "logit", trend = TRUE)
+```
+
+```{r}
+decont_seurat$orig.cond <- paste(decont_seurat$orig.ident, decont_seurat$condition, sep = "_")
+```
+
+```{r}
+props <- getTransformedProps(clusters = decont_seurat$lineage, sample = decont_seurat$orig.ident)
+```
+
+```{r}
+adj_props <- as.data.frame(props[["TransformedProps"]])
+
+adj_props %>% 
+  group_by(clusters) %>% 
+  shapiro_test(Freq)
+```
+
+```{r}
+plotCellTypeMeanVar(props$Counts)
+```
+
+```{r}
+key <- FetchData(object = decont_seurat, vars = c("orig.ident", "orig.cond", "condition")) %>% 
+  unique()
+
+df_props <- as.data.frame(props$Proportions) %>% 
+  rename(orig.ident = sample)
+
+df_props <- left_join(df_props, key, by = c("orig.ident"))
+
+df_props <- df_props %>% 
+  mutate(Percentage = Freq * 100)
+
+df_props %>% 
+  ggplot(mapping = aes(x = orig.ident, y = Percentage, fill = clusters)) + 
+  geom_col(position = position_fill(reverse = TRUE), color = "black") +
+  facet_wrap(facets = vars(condition), scales = "free") +
+  coord_flip() +
+  theme_classic() +
+  theme(legend.position = "none", text = element_text(size = 15)) +
+  labs(x = "")
+
+df_props %>% 
+  group_by(condition, clusters) %>% 
+  summarise(Percentage = mean(Percentage)) %>% 
+  ggplot(mapping = aes(x = fct_rev(condition), y = Percentage, fill = clusters)) + 
+  geom_col(position = position_fill(reverse = TRUE), color = "black") +
+  theme_classic() +
+  theme(legend.position = "none", text = element_text(size = 20)) +
+  labs(x = "") +
+  scale_y_continuous(labels = percent) +
+  coord_flip()
+```

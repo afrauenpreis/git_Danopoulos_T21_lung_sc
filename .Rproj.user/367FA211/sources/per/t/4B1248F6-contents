@@ -1,0 +1,219 @@
+---
+title: "DecontX_cutoff"
+author: "Andrew Frauenpreis"
+date: "2024-01-04"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+  
+Decontaminated Seurat object saved in decont_x_pipeline.Rmd is loaded in here.
+  
+```{r}
+decont_seurat <- readRDS(file = "./Seurat objects/t21.decontX.rds")
+```
+
+```{r}
+library(tidyverse)
+library(Seurat)
+```
+
+```{r}
+DimPlot(decont_seurat, label = TRUE)
+DimPlot(decont_seurat, group.by = "condition")
+DimPlot(decont_seurat, group.by = "orig.ident")
+DimPlot(decont_seurat, group.by = "decontX_clusters", label = TRUE)
+FeaturePlot(decont_seurat, features = "decontX_contamination", label = TRUE)
+
+DimPlot(decont_seurat, reduction = "decont_umap", label = TRUE, group.by = "decontX_clusters")
+DimPlot(decont_seurat, reduction = "decont_umap", label = TRUE)
+FeaturePlot(decont_seurat, reduction = "decont_umap", features = "decontX_contamination", label = TRUE)
+```
+
+QC metrics for each sample prior to cleaning
+
+```{r}
+table(decont_seurat@meta.data$orig.ident)
+table(decont_seurat@meta.data$condition)
+```
+
+```{r}
+col_list <- c("#beba5a", "#d5db40", "#72742b", "#c3cb9f", "#6d7a5a", "#7ee34d", "#a9e28b", "#5ab143", "#548b45")
+
+VlnPlot(decont_seurat, features = c("nCount_decontXcounts", "nFeature_decontXcounts", "percent.mt"), cols = col_list, group.by = "orig.ident")
+
+VlnPlot(decont_seurat, features = c("nCount_decontXcounts", "percent.mt", "decontX_contamination"), cols = col_list, group.by = "orig.ident")
+
+VlnPlot(decont_seurat, features = c("nCount_decontXcounts", "percent.mt", "decontX_contamination"))
+```
+  
+Splitting, cleaning, and merging. 
+  
+```{r}
+cleaning.df <- FetchData(object = decont_seurat, vars = c("orig.ident", "nFeature_decontXcounts")) %>% 
+  group_by(orig.ident) %>% 
+  summarise(median_features = median(nFeature_decontXcounts))
+
+cleaning_vec <- cleaning.df$median_features
+names(cleaning_vec) <- cleaning.df$orig.ident
+
+cleaning_vec
+```
+
+The logic for cleaning by sample is showcased below, the minimum median feature belongs to H28412 at 1182 features
+while H28406 has a median of 3036.5. Therefore, by sample cleaning here is necessary as to not be biased against 
+specific samples. 
+
+https://www.10xgenomics.com/resources/analysis-guides/common-considerations-for-quality-control-filters-for-single-cell-rna-seq-data 
+
+```{r}
+max(cleaning_vec)
+
+min(cleaning_vec)
+
+max(cleaning_vec) - min(cleaning_vec)
+```
+  
+Each sample will be filtered by 3X the median features. 
+  
+3X
+```{r}
+cleaning_vec * 3
+```
+
+```{r}
+decont_seurat.list <- SplitObject(decont_seurat, split.by = "orig.ident")
+```
+  
+Each Sample is individually filtered.
+  
+```{r}
+for (sample in 1:length(decont_seurat.list)) {
+  decont_seurat.list[[sample]] <- subset(decont_seurat.list[[sample]], subset = nFeature_decontXcounts < 3*cleaning_vec[sample]) 
+}
+```
+  
+The data are then integrated.
+  
+```{r}
+decont_seurat.list <- lapply(X = decont_seurat.list, FUN = SCTransform, method = "glmGamPoi", assay = "decontXcounts", vars.to.regress = "percent.mt")
+features <- SelectIntegrationFeatures(object.list = decont_seurat.list, nfeatures = 3000)
+decont_seurat.list <- PrepSCTIntegration(object.list = decont_seurat.list, anchor.features = features)
+decont_seurat.list <- lapply(X = decont_seurat.list, FUN = RunPCA, features = features)
+```
+
+```{r}
+anchors <- FindIntegrationAnchors(object.list = decont_seurat.list, normalization.method = "SCT",
+    anchor.features = features, dims = 1:30, reduction = "rpca", k.anchor = 20)
+
+decont_seurat_rPCA <- IntegrateData(anchorset = anchors, normalization.method = "SCT", dims = 1:30)
+```
+
+```{r}
+decont_seurat_rPCA <- decont_seurat_rPCA %>% 
+  RunPCA()
+```
+
+```{r}
+ElbowPlot(decont_seurat_rPCA, ndims = 20)
+
+ElbowPlot(decont_seurat_rPCA, ndims = 50)
+```
+
+```{r}
+DefaultAssay(decont_seurat_rPCA) <- "integrated"
+
+decont_seurat_rPCA <- decont_seurat_rPCA %>% 
+  RunUMAP(dims = 1:10) %>% 
+  FindNeighbors(dims = 1:10) %>% 
+  FindClusters(resolution = 0.6)
+```
+
+Post cleaning QC metrics:
+
+Counts prior to 3X median cutoff are as below:
+
+  3412   3416   3442   3463   3675 H28406 H28412 H28433 H28554 
+  3049   1702   3591   4844   7082   3014   2625   3398   3227 
+
+```{r}
+table(decont_seurat_rPCA@meta.data$orig.ident)
+table(decont_seurat_rPCA@meta.data$condition)
+```
+
+```{r}
+col_list <- c("#beba5a", "#d5db40", "#72742b", "#c3cb9f", "#6d7a5a", "#7ee34d", "#a9e28b", "#5ab143", "#548b45")
+
+VlnPlot(decont_seurat, features = c("nCount_decontXcounts", "nFeature_decontXcounts", "percent.mt"), cols = col_list, group.by = "orig.ident")
+```
+
+```{r}
+DimPlot(decont_seurat_rPCA, label = TRUE)
+
+DimPlot(decont_seurat_rPCA, group.by = "condition")
+DimPlot(decont_seurat_rPCA, split.by = "condition")
+
+DimPlot(decont_seurat_rPCA, group.by = "orig.ident")
+DimPlot(decont_seurat_rPCA, group.by = "decontX_clusters", label = TRUE)
+FeaturePlot(decont_seurat_rPCA, features = "decontX_contamination", label = TRUE)
+```
+
+```{r}
+DefaultAssay(decont_seurat_rPCA) <- "SCT"
+```
+  
+Standard identity genes to inform major clusters.
+  
+```{r}
+epi_gene_list <- c("EPCAM", "CDH1", "SFTPB", "NKX2-1")
+mesenchymal_gene_list <- c("ACTA2", "COL1A1", "ELN", "MEST")
+endo_gene_list <- c("VWF", "PECAM1", "CDH5", "CLDN5")
+immune_gene_list <- c("PTPRC", "CD3E", "CD19", "CD8A", "HBB", "CD74")
+all_lineage_gene_list <- c(epi_gene_list, mesenchymal_gene_list, endo_gene_list, immune_gene_list)
+```
+
+```{r}
+FeaturePlot(decont_seurat_rPCA, features = epi_gene_list, label = TRUE)
+
+FeaturePlot(decont_seurat_rPCA, features = mesenchymal_gene_list, label = TRUE)
+
+FeaturePlot(decont_seurat_rPCA, features = endo_gene_list, label = TRUE)
+
+FeaturePlot(decont_seurat_rPCA, features = immune_gene_list, label = TRUE)
+```
+
+Clusters are assigned to major cell type lineages.
+
+```{r}
+epi_cluster_list <- c(6,7,25,26)
+
+mesenchymal_cluster_list <- c(0,1,2,3,4)
+
+endo_cluster_list <- c(8,10,24)
+
+immune_cluster_list <- c(15,17,18,20,21,22)
+
+decont_seurat_rPCA$lineage <- "Mesenchymal"
+
+decont_seurat_rPCA$lineage <- ifelse(decont_seurat_rPCA$seurat_clusters %in% epi_cluster_list, "Epithelial", decont_seurat_rPCA$lineage)
+
+decont_seurat_rPCA$lineage <- ifelse(decont_seurat_rPCA$seurat_clusters %in% immune_cluster_list, "Immune", decont_seurat_rPCA$lineage)
+
+decont_seurat_rPCA$lineage <- ifelse(decont_seurat_rPCA$seurat_clusters %in% endo_cluster_list, "Endothelial", decont_seurat_rPCA$lineage)
+```
+
+```{r}
+DimPlot(decont_seurat_rPCA, group.by = "lineage")
+```
+
+```{r}
+decont_seurat_rPCA_mes <- subset(decont_seurat_rPCA, subset = lineage == "Mesenchymal")
+```
+
+Data are saved for future use.
+
+```{r}
+saveRDS(decont_seurat_rPCA, file = "./Seurat objects/decont_seurat_rPCA_cutoff.rds")
+```

@@ -1,0 +1,123 @@
+---
+title: "DecontX_cutoff_epithelial"
+author: "Andrew Frauenpreis"
+date: "2024-01-17"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(Seurat)
+```
+  
+This file contains analysis for the epithelium but the basic process was performed for each major lienage.
+  
+Desired lineage was subsetted from the major object.
+  
+```{r}
+decont_seurat_epi <- readRDS(file = "./Seurat objects/decont_seurat_rPCA_cutoff.rds")
+
+decont_seurat_epi <- subset(decont_seurat_epi, subset = lineage == "Epithelial")
+```
+
+```{r}
+DimPlot(decont_seurat_epi, label = TRUE)
+
+VlnPlot(decont_seurat_epi, features = c("nFeature_decontXcounts", "percent.mt"))
+
+FeaturePlot(decont_seurat_epi, features = c("nFeature_decontXcounts", "percent.mt"))
+```
+  
+Subsetted object was then intergrated as previously done with the major object.
+  
+```{r}
+DefaultAssay(decont_seurat_epi) <- "decontXcounts"
+
+decont_seurat_epi.list <- SplitObject(decont_seurat_epi, split.by = "orig.ident")
+
+decont_seurat_epi.list <- lapply(X = decont_seurat_epi.list, FUN = SCTransform, method = "glmGamPoi", assay = "decontXcounts", vars.to.regress = "percent.mt")
+features <- SelectIntegrationFeatures(object.list = decont_seurat_epi.list, nfeatures = 3000)
+decont_seurat_epi.list <- PrepSCTIntegration(object.list = decont_seurat_epi.list, anchor.features = features)
+decont_seurat_epi.list <- lapply(X = decont_seurat_epi.list, FUN = RunPCA, features = features)
+```
+
+```{r}
+anchors <- FindIntegrationAnchors(object.list = decont_seurat_epi.list, normalization.method = "SCT",
+    anchor.features = features, dims = 1:30, reduction = "rpca", k.anchor = 20)
+
+decont_seurat_epi_rPCA <- IntegrateData(anchorset = anchors, normalization.method = "SCT", dims = 1:30)
+```
+
+```{r}
+decont_seurat_epi_rPCA <- decont_seurat_epi_rPCA %>% 
+  RunPCA()
+```
+
+```{r}
+ElbowPlot(decont_seurat_epi_rPCA)
+
+ElbowPlot(decont_seurat_epi_rPCA, ndims = 50)
+```
+  
+A default resolution of 0.4 was chosen for a first glance but this is not the final 
+resolution, which is further investigated in "DecontX_cutoff_epithelial_summary.Rmd."
+  
+```{r}
+DefaultAssay(decont_seurat_epi_rPCA) <- "integrated"
+
+decont_seurat_epi_rPCA <- decont_seurat_epi_rPCA%>% 
+  RunUMAP(dims = 1:30) %>% 
+  FindNeighbors(dims = 1:30) %>% 
+  FindClusters(resolution = 0.4)
+```
+
+```{r}
+DimPlot(decont_seurat_epi_rPCA, label = TRUE)
+
+DimPlot(decont_seurat_epi_rPCA, label = TRUE, split.by = "condition")
+
+DimPlot(decont_seurat_epi_rPCA, group.by = "condition")
+
+DimPlot(decont_seurat_epi_rPCA, group.by = "Phase")
+```
+  
+```{r}
+DefaultAssay(decont_seurat_epi_rPCA) <- "SCT"
+
+decont_seurat_epi_rPCA <- PrepSCTFindMarkers(decont_seurat_epi_rPCA)
+
+decont_seurat_epi_markers_0.4 <- FindAllMarkers(decont_seurat_epi_rPCA, min.pct = 0.1, logfc.threshold = 0.25, only.pos = TRUE)
+```
+  
+Top ten genes for each clustered screened for abnormalities such as mitochondrial genes. 
+  
+```{r}
+top10 <- decont_seurat_epi_markers %>% 
+    group_by(cluster) %>%
+    dplyr::filter(avg_log2FC > 1) %>%
+    slice_head(n = 10) %>%
+    ungroup()
+
+top10 %>% 
+  group_by(cluster) %>% 
+  count()
+```
+  
+QC metrics for each cluster. 
+  
+```{r}
+VlnPlot(decont_seurat_epi_rPCA, features = c("nFeature_decontXcounts", "percent.mt"))
+
+FeaturePlot(decont_seurat_epi_rPCA, features = c("nFeature_decontXcounts", "percent.mt"))
+```
+  
+Object saved for further analysis. The summary.Rmd files for each object include marker.csv files for
+annotations and are where each objects resolution is chosen.
+  
+```{r}
+saveRDS(decont_seurat_epi_rPCA, file = "./Seurat objects/decont_seurat_epi_reintegrated.rds")
+```

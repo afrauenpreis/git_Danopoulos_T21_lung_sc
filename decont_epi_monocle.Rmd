@@ -1,0 +1,138 @@
+---
+title: "decont_epi_monocle"
+author: "Andrew Frauenpreis"
+date: "2024-02-17"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+```{r}
+library(tidyverse)
+library(patchwork)
+library(Seurat)
+library(SeuratWrappers)
+library(monocle3)
+```
+  
+This basic process was used for other lineages but here the epithelium
+is used as an example.
+  
+```{r}
+decont_seurat_epi <- readRDS(file = "./Seurat objects/decont_seurat_epi_reintegrated.rds")
+```
+
+```{r}
+DimPlot(decont_seurat_epi, reduction = "umap", label = TRUE)
+
+FeaturePlot(decont_seurat_epi, features = "SFTPC")
+```
+  
+Depending on the lineage, a subset of known developmentally connected clusters are
+chosen for analysis.
+  
+```{r}
+AT_sub <- subset(decont_seurat_epi, subset = seurat_clusters %in% c(0, 1, 2, 3))
+
+DimPlot(AT_sub, label = TRUE)
+
+DimPlot(AT_sub, group.by = "cell.ID")
+```
+  
+```{r}
+cds <- as.cell_data_set(AT_sub)
+
+cds <- cluster_cells(cds)
+
+p1 <- plot_cells(cds, color_cells_by = "cell.ID",)
+p2 <- plot_cells(cds)
+
+wrap_plots(p1, p2)
+
+cds <- learn_graph(cds, close_loop = FALSE, use_partition = FALSE)
+
+plot_cells(cds, label_groups_by_cluster = FALSE, label_leaves = FALSE, label_branch_points = FALSE)
+
+cds <- order_cells(cds, reduction_method = "UMAP")
+
+plot_cells(cds, color_cells_by = "pseudotime", show_trajectory_graph = TRUE)
+```
+
+```{r, eval=FALSE}
+cds_pr_test_res <- graph_test(cds, neighbor_graph="principal_graph", cores=1)
+pr_deg_ids <- row.names(subset(cds_pr_test_res, q_value < 0.05))
+
+rowData(cds)$gene_name <- rownames(cds)
+rowData(cds)$gene_short_name <- rowData(cds)$gene_name
+```
+
+```{r,eval=FALSE}
+plot_cells(cds, gene = c("LXN", "PFN1", "MALAT1", "AQP1", "TBX2", "EDNRB"),
+           show_trajectory_graph=TRUE,
+           label_cell_groups=FALSE,
+           label_leaves=FALSE)
+```
+
+```{r}
+AT_sub$pseudotime <- pseudotime(cds)
+```
+
+```{r}
+dimred <- AT_sub@reductions$umap@cell.embeddings
+clustering <- AT_sub$seurat_clusters
+counts <- as.matrix(AT_sub@assays$SCT@counts)
+
+sce_gg_dat <- as.data.frame(dimred)
+
+sce_gg_dat$cluster <- clustering
+
+sce_gg_dat$pseudotime <- AT_sub$pseudotime
+
+ica_space_df <- t(cds@principal_graph_aux[["UMAP"]]$dp_mst) %>% 
+  as.data.frame() %>% 
+  dplyr::select(prin_graph_dim_1 = 1, prin_graph_dim_2 = 2) %>% 
+  dplyr::mutate(sample_name = rownames(.), sample_state = rownames(.))
+
+dp_mst <- cds@principal_graph[["UMAP"]]
+
+edge_df <- dp_mst %>% igraph::as_data_frame() %>% dplyr::select(source = "from", 
+      target = "to") %>% dplyr::left_join(ica_space_df %>% 
+      dplyr::select(source = "sample_name", source_prin_graph_dim_1 = "prin_graph_dim_1", 
+        source_prin_graph_dim_2 = "prin_graph_dim_2"), 
+      by = "source") %>% dplyr::left_join(ica_space_df %>% 
+      dplyr::select(target = "sample_name", target_prin_graph_dim_1 = "prin_graph_dim_1", 
+        target_prin_graph_dim_2 = "prin_graph_dim_2"), 
+      by = "target")
+
+g1 <- sce_gg_dat %>% 
+  ggplot(mapping = aes(umap_1, umap_2)) +
+  geom_point(aes(fill = pseudotime, color = cluster), binaxis = "y", stackdir = "center", alpha = 1, shape = 21) +
+  theme_classic() +
+  scale_fill_viridis_c() +
+  ggsci::scale_color_lancet()
+
+g1 <- g1 + geom_segment(aes_string(x = "source_prin_graph_dim_1", 
+  y = "source_prin_graph_dim_2", xend = "target_prin_graph_dim_1", 
+  yend = "target_prin_graph_dim_2"), size = 0.75, 
+  color = "black", linetype = "solid", 
+  na.rm = TRUE, data = edge_df) +
+  theme(text = element_text(size = 15))
+
+g2 <- sce_gg_dat %>% 
+  ggplot(mapping = aes(umap_1, umap_2)) +
+  geom_point(aes(color = pseudotime, shape = cluster), binaxis = "y", stackdir = "center", alpha = 1) +
+  theme_classic() +
+  scale_color_viridis_c()
+
+g2 <- g2 + geom_segment(aes_string(x = "source_prin_graph_dim_1", 
+  y = "source_prin_graph_dim_2", xend = "target_prin_graph_dim_1", 
+  yend = "target_prin_graph_dim_2"), size = 2, 
+  color = "black", linetype = "solid", 
+  na.rm = TRUE, data = edge_df) +
+  theme(text = element_text(size = 15))
+
+g1
+
+g2
+```
