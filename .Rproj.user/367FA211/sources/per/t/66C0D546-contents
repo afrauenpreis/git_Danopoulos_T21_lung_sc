@@ -123,6 +123,4 @@ write_xlsx(prolif_mes_DEGs, "./data/prolif_mes_DEG_1-26-24.xlsx")
 write_xlsx(epi_DEGs, "./data/epi_DEG_2-7-24.xlsx")
 
 write_xlsx(endo_DEGs, "./data/endo_DEG_2-12-24.xlsx")
-
-write_xlsx(immune_DEGs, "./data/immune_DEG_1-26-24.xlsx")
 ```
